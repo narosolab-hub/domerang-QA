@@ -21,8 +21,9 @@ const PRIORITY_ORDER: Record<string, number> = { 높음: 0, 중간: 1, 낮음: 2
 
 // ── 이슈 처리 현황판 ────────────────────────────────────────────
 
-type IssueView = 'all' | 'not_raised' | 'raised' | 'fixed'
+type IssueView = 'active' | 'all' | 'not_raised' | 'raised' | 'fixed'
 const ISSUE_VIEW_LABELS: Record<IssueView, string> = {
+  active: '처리 중',
   all: '전체',
   not_raised: '미이슈라이징',
   raised: '이슈라이징 완료',
@@ -31,25 +32,33 @@ const ISSUE_VIEW_LABELS: Record<IssueView, string> = {
 
 function IssueBoard({
   items,
+  systems,
   onSelect,
 }: {
   items: ReqWithResult[]
+  systems: System[]
   onSelect: (req: ReqWithResult) => void
 }) {
-  const [view, setView] = useState<IssueView>('all')
+  const [view, setView] = useState<IssueView>('active')
+  const [sysFilter, setSysFilter] = useState<string>('all')
+
+  const activeSystems = systems.filter(s => items.some(i => (i.systems as any)?.id === s.id))
+
+  const filtered = items
+    .filter(item => sysFilter === 'all' || (item.systems as any)?.id === sysFilter)
+    .filter(item => {
+      const r = item.currentResult
+      if (view === 'active')     return !r?.issue_fixed
+      if (view === 'not_raised') return !r?.issue_raised
+      if (view === 'raised')     return r?.issue_raised && !r?.issue_fixed
+      if (view === 'fixed')      return !!r?.issue_fixed
+      return true
+    })
 
   const total = items.length
   const raised = items.filter(i => i.currentResult?.issue_raised).length
   const fixed = items.filter(i => i.currentResult?.issue_fixed).length
   const needRetest = items.filter(i => i.currentResult?.retest_reason).length
-
-  const filtered = items.filter(item => {
-    const r = item.currentResult
-    if (view === 'not_raised') return !r?.issue_raised
-    if (view === 'raised') return r?.issue_raised && !r?.issue_fixed
-    if (view === 'fixed') return !!r?.issue_fixed
-    return true
-  })
 
   return (
     <section>
@@ -59,18 +68,14 @@ function IssueBoard({
           🔥 이슈 처리 현황
           <Badge variant="secondary">{total}</Badge>
         </h2>
-        <div className="flex gap-3 text-xs text-gray-500">
+        <div className="flex items-center gap-3 text-xs text-gray-500">
           <span>
             이슈라이징{' '}
-            <strong className="text-gray-800">
-              {raised}/{total}
-            </strong>
+            <strong className="text-gray-800">{raised}/{total}</strong>
           </span>
           <span>
             수정완료{' '}
-            <strong className="text-gray-800">
-              {fixed}/{total}
-            </strong>
+            <strong className="text-gray-800">{fixed}/{total}</strong>
           </span>
           {needRetest > 0 && (
             <span>
@@ -78,12 +83,24 @@ function IssueBoard({
               <strong className="text-orange-600">{needRetest}</strong>
             </span>
           )}
+          {activeSystems.length > 1 && (
+            <select
+              value={sysFilter}
+              onChange={e => setSysFilter(e.target.value)}
+              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-600 bg-white"
+            >
+              <option value="all">전체 시스템</option>
+              {activeSystems.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
-      {/* 필터 칩 */}
+      {/* 뷰 필터 칩 */}
       <div className="flex gap-1 flex-wrap mb-3">
-        {(['all', 'not_raised', 'raised', 'fixed'] as IssueView[]).map(v => (
+        {(['active', 'all', 'not_raised', 'raised', 'fixed'] as IssueView[]).map(v => (
           <button
             key={v}
             onClick={() => setView(v)}
@@ -103,8 +120,9 @@ function IssueBoard({
         <p className="text-sm text-gray-400 py-6 text-center">해당하는 항목이 없습니다.</p>
       ) : (
         <div className="border rounded-lg overflow-hidden">
+          <div className="overflow-y-auto max-h-[300px]">
           <table className="w-full text-sm table-fixed">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-gray-50 border-b sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-[9%]"><span className="whitespace-nowrap">시스템</span></th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-[38%]">기능명</th>
@@ -190,8 +208,119 @@ function IssueBoard({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
+    </section>
+  )
+}
+
+// ── Block 현황판 ─────────────────────────────────────────────────
+
+function BlockBoard({
+  items,
+  systems,
+  onSelect,
+}: {
+  items: ReqWithResult[]
+  systems: System[]
+  onSelect: (req: ReqWithResult) => void
+}) {
+  const [sysFilter, setSysFilter] = useState<string>('all')
+
+  if (items.length === 0) return null
+
+  const activeSystems = systems.filter(s => items.some(i => (i.systems as any)?.id === s.id))
+  const filtered = sysFilter === 'all'
+    ? items
+    : items.filter(i => (i.systems as any)?.id === sysFilter)
+
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+          🚫 Block 현황
+          <Badge variant="secondary">{items.length}</Badge>
+        </h2>
+        {activeSystems.length > 1 && (
+          <select
+            value={sysFilter}
+            onChange={e => setSysFilter(e.target.value)}
+            className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-600 bg-white"
+          >
+            <option value="all">전체 시스템</option>
+            {activeSystems.map(s => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      <div className="border rounded-lg overflow-hidden">
+        <div className="overflow-y-auto max-h-[220px]">
+          <table className="w-full text-sm table-fixed">
+            <thead className="bg-gray-50 border-b sticky top-0 z-10">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-[10%]"><span className="whitespace-nowrap">시스템</span></th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-[55%]">기능명</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-[20%]"><span className="whitespace-nowrap">재테스트</span></th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-[15%]"><span className="whitespace-nowrap">이슈라이징</span></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filtered.map(req => {
+                const r = req.currentResult
+                const depthPath = [req.depth_0, req.depth_1].filter(Boolean).join(' › ')
+                return (
+                  <tr
+                    key={req.id}
+                    className="hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => onSelect(req)}
+                  >
+                    <td className="px-3 py-2.5">
+                      {(() => {
+                        const sysName = (req.systems as any)?.name
+                        return (
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getSystemColor(sysName).badge}`}>
+                            {sysName ?? '-'}
+                          </span>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {depthPath && (
+                        <p className="text-xs text-gray-400 mb-0.5 truncate">{depthPath}</p>
+                      )}
+                      <p className="font-medium truncate">
+                        {req.display_id && (
+                          <span className="text-xs font-mono text-gray-400 mr-1">#{req.display_id}</span>
+                        )}
+                        {req.feature_name ?? '(기능명 없음)'}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {r?.retest_reason ? (
+                        <span className="px-2 py-0.5 rounded text-xs bg-orange-50 text-orange-600 border border-orange-200 whitespace-nowrap">
+                          {r.retest_reason}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">-</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {r?.issue_raised ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500 inline" />
+                      ) : (
+                        <Circle className="h-4 w-4 text-gray-300 inline" />
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
   )
 }
@@ -329,10 +458,15 @@ export function BacklogTab({ cycleId, systems, onSelectRequirement, refreshKey }
     return <div className="text-center py-20 text-gray-400">로딩 중...</div>
   }
 
-  // 이슈 처리 현황판: Fail / Block 항목
-  const issueItems = allItems.filter(
-    r => r.currentResult?.status === 'Fail' || r.currentResult?.status === 'Block'
-  )
+  // 이슈 처리 현황판: Fail 이거나 이슈 항목이 등록된 것 (Block 제외 — Block은 별도 섹션)
+  const issueItems = allItems.filter(r => {
+    const status = r.currentResult?.status
+    const hasIssues = (r.currentResult?.issue_items?.length ?? 0) > 0
+    return (status === 'Fail' || hasIssues) && status !== 'Block'
+  })
+
+  // Block 현황: Block 상태 항목만
+  const blockItems = allItems.filter(r => r.currentResult?.status === 'Block')
 
   // 테스트 작업 큐: 미테스트 + 재테스트 필요 (우선순위 정렬)
   const queueItems = allItems
@@ -354,7 +488,8 @@ export function BacklogTab({ cycleId, systems, onSelectRequirement, refreshKey }
 
   return (
     <div className="space-y-8">
-      <IssueBoard items={issueItems} onSelect={onSelectRequirement} />
+      <IssueBoard items={issueItems} systems={systems} onSelect={onSelectRequirement} />
+      <BlockBoard items={blockItems} systems={systems} onSelect={onSelectRequirement} />
       <TestQueue items={queueItems} onSelect={onSelectRequirement} />
     </div>
   )
