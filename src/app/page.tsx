@@ -1,65 +1,156 @@
-import Image from "next/image";
+'use client'
+
+export const dynamic = 'force-dynamic'
+
+import { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { CycleSelector } from '@/components/CycleSelector'
+import { DashboardTab } from '@/components/DashboardTab'
+import { RequirementsTab } from '@/components/RequirementsTab'
+import { BacklogTab } from '@/components/BacklogTab'
+import { SidePanel } from '@/components/SidePanel'
+import { UploadModal } from '@/components/UploadModal'
+import { AddRequirementModal } from '@/components/AddRequirementModal'
+import { getSystems, getTestCycles } from '@/lib/queries'
+import type { System, TestCycle, Requirement, TestResult } from '@/lib/types'
+import { Upload, Plus } from 'lucide-react'
+
+type ReqWithResult = Requirement & { currentResult?: TestResult }
 
 export default function Home() {
+  const [systems, setSystems] = useState<System[]>([])
+  const [cycles, setCycles] = useState<TestCycle[]>([])
+  const [selectedCycleId, setSelectedCycleId] = useState('')
+  const [selectedReq, setSelectedReq] = useState<ReqWithResult | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [activeTab, setActiveTab] = useState('dashboard')
+  const [loading, setLoading] = useState(true)
+
+  const refresh = useCallback(() => setRefreshKey(k => k + 1), [])
+
+  useEffect(() => {
+    Promise.all([getSystems(), getTestCycles()]).then(([s, c]) => {
+      setSystems(s)
+      setCycles(c)
+      if (c.length > 0) setSelectedCycleId(c[c.length - 1].id)
+    }).finally(() => setLoading(false))
+  }, [])
+
+  const selectedCycle = cycles.find(c => c.id === selectedCycleId) ?? null
+
+  const handleSelectRequirement = (req: ReqWithResult) => {
+    setSelectedReq(req)
+    if (activeTab === 'dashboard' || activeTab === 'backlog') {
+      setActiveTab('requirements')
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-500">로딩 중...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+    <div className="min-h-screen bg-gray-50">
+      {/* 헤더 */}
+      <header className="bg-white border-b sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-base font-bold text-gray-900">도매랑 QA</h1>
+            <span className="text-xs text-gray-400 hidden sm:block">품질 검증 대시보드</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <CycleSelector
+              cycles={cycles}
+              selectedId={selectedCycleId}
+              onSelect={setSelectedCycleId}
+              onCycleCreated={cycle => setCycles(prev => [...prev, cycle])}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="h-8">
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              신규 추가
+            </Button>
+            <Button size="sm" onClick={() => setUploadOpen(true)} className="h-8">
+              <Upload className="h-3.5 w-3.5 mr-1" />
+              업로드
+            </Button>
+          </div>
         </div>
+      </header>
+
+      {/* 탭 + 컨텐츠 */}
+      <main className="max-w-7xl mx-auto px-4 py-5">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="mb-5">
+            <TabsTrigger value="dashboard">대시보드</TabsTrigger>
+            <TabsTrigger value="requirements">요구사항</TabsTrigger>
+            <TabsTrigger value="backlog">백로그</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="dashboard">
+            <DashboardTab
+              cycleId={selectedCycleId}
+              cycle={selectedCycle}
+              onSelectRequirement={handleSelectRequirement}
+              refreshKey={refreshKey}
+            />
+          </TabsContent>
+
+          <TabsContent value="requirements">
+            <RequirementsTab
+              cycleId={selectedCycleId}
+              systems={systems}
+              onSelectRequirement={req => setSelectedReq(req)}
+              selectedId={selectedReq?.id ?? null}
+              refreshKey={refreshKey}
+              onRefresh={refresh}
+            />
+          </TabsContent>
+
+          <TabsContent value="backlog">
+            <BacklogTab
+              cycleId={selectedCycleId}
+              systems={systems}
+              onSelectRequirement={handleSelectRequirement}
+              refreshKey={refreshKey}
+            />
+          </TabsContent>
+        </Tabs>
       </main>
+
+      {/* 사이드 패널 */}
+      <SidePanel
+        requirement={selectedReq}
+        cycleId={selectedCycleId}
+        systems={systems}
+        onClose={() => setSelectedReq(null)}
+        onUpdate={refresh}
+        onNavigate={req => setSelectedReq(req)}
+      />
+
+      {/* 업로드 모달 */}
+      <UploadModal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        systems={systems}
+        onSuccess={refresh}
+      />
+
+      {/* 신규 추가 모달 */}
+      <AddRequirementModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        systems={systems}
+        onSuccess={refresh}
+      />
     </div>
-  );
+  )
 }
