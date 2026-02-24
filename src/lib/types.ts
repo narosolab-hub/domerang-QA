@@ -1,10 +1,28 @@
 export type TestStatus = 'Pass' | 'Fail' | 'Block' | 'In Progress' | '미테스트'
 export type Priority = '높음' | '중간' | '낮음'
 
+export type Severity = '크리티컬' | '하이' | '미디엄' | '로우'
+
 export interface IssueItem {
   text: string
   raised: boolean
   fixed: boolean
+  issueNo?: string  // 이슈라이징 후 입력하는 이슈 번호 (e.g. "#1234")
+  severity?: Severity
+}
+
+export const SEVERITY_STYLE: Record<Severity, { badge: string; active: string }> = {
+  '크리티컬': { badge: 'bg-red-100 text-red-700 border-red-300',         active: 'bg-red-500 text-white border-red-500' },
+  '하이':     { badge: 'bg-orange-100 text-orange-700 border-orange-300', active: 'bg-orange-500 text-white border-orange-500' },
+  '미디엄':   { badge: 'bg-yellow-100 text-yellow-700 border-yellow-300', active: 'bg-yellow-400 text-white border-yellow-400' },
+  '로우':     { badge: 'bg-blue-100 text-blue-700 border-blue-300',       active: 'bg-blue-400 text-white border-blue-400' },
+}
+
+export const SEVERITY_ORDER: Record<Severity, number> = {
+  '크리티컬': 0,
+  '하이':     1,
+  '미디엄':   2,
+  '로우':     3,
 }
 
 export interface System {

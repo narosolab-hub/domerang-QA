@@ -41,7 +41,7 @@ export function AddRequirementModal({ open, onClose, systems, onSuccess }: Props
 
   useEffect(() => {
     if (!systemId) return
-    getDepthValues(systemId).then(({ depth_0, depth_1ByParent }) => {
+    getDepthValues([systemId]).then(({ depth_0, depth_1ByParent }) => {
       setDepth0Options(depth_0)
       setDepth1ByParent(depth_1ByParent)
     })

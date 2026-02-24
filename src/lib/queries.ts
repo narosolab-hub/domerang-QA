@@ -59,13 +59,13 @@ export async function getRequirements(filters?: {
 }
 
 // depth 계층 값 목록 조회 (cascade 필터용)
-export async function getDepthValues(systemId?: string): Promise<{ depth_0: string[]; depth_1ByParent: Record<string, string[]> }> {
+export async function getDepthValues(systemIds?: string[]): Promise<{ depth_0: string[]; depth_1ByParent: Record<string, string[]> }> {
   let query = supabase
     .from('requirements')
     .select('depth_0, depth_1')
 
-  if (systemId && systemId !== 'all') {
-    query = query.eq('system_id', systemId)
+  if (systemIds && systemIds.length > 0) {
+    query = query.in('system_id', systemIds)
   }
 
   const { data } = await query
@@ -89,27 +89,27 @@ export async function getDepthValues(systemId?: string): Promise<{ depth_0: stri
 }
 
 export async function getRequirementsWithResults(cycleId: string, filters?: {
-  systemId?: string
+  systemIds?: string[]
   search?: string
   statusFilter?: string
   scenarioFilter?: string
   priorityFilter?: string
-  depth0?: string
-  depth1?: string
+  depth0?: string[]
+  depth1?: string[]
 }): Promise<(Requirement & { currentResult?: TestResult })[]> {
   let query = supabase
     .from('requirements')
     .select(`*, systems(id, name), test_results(*)`)
     .order('created_at')
 
-  if (filters?.systemId && filters.systemId !== 'all') {
-    query = query.eq('system_id', filters.systemId)
+  if (filters?.systemIds && filters.systemIds.length > 0) {
+    query = query.in('system_id', filters.systemIds)
   }
-  if (filters?.depth0) {
-    query = query.eq('depth_0', filters.depth0)
+  if (filters?.depth0 && filters.depth0.length > 0) {
+    query = query.in('depth_0', filters.depth0)
   }
-  if (filters?.depth1) {
-    query = query.eq('depth_1', filters.depth1)
+  if (filters?.depth1 && filters.depth1.length > 0) {
+    query = query.in('depth_1', filters.depth1)
   }
   if (filters?.search) {
     query = query.or(

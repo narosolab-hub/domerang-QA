@@ -41,12 +41,44 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
   const [loading, setLoading] = useState(true)
 
   // 서버 필터 상태
-  const [systemFilter, setSystemFilter] = useState('all')
-  const [depth0Filter, setDepth0Filter] = useState('')
-  const [depth1Filter, setDepth1Filter] = useState('')
+  const [systemFilters, setSystemFilters] = useState<Set<string>>(new Set())
+  const [depth0Filters, setDepth0Filters] = useState<Set<string>>(new Set())
+  const [depth1Filters, setDepth1Filters] = useState<Set<string>>(new Set())
   const [statusFilter, setStatusFilter] = useState('all')
   const [scenarioFilter, setScenarioFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
+
+  function toggleSystem(id: string) {
+    setSystemFilters(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+    setDepth0Filters(new Set())
+    setDepth1Filters(new Set())
+  }
+
+  function toggleDepth0(d: string) {
+    setDepth0Filters(prev => {
+      const next = new Set(prev)
+      if (next.has(d)) {
+        next.delete(d)
+        const validDepth1 = new Set(Array.from(next).flatMap(p => depth1ByParent[p] ?? []))
+        setDepth1Filters(p1 => new Set(Array.from(p1).filter(v => validDepth1.has(v))))
+      } else {
+        next.add(d)
+      }
+      return next
+    })
+  }
+
+  function toggleDepth1(d: string) {
+    setDepth1Filters(prev => {
+      const next = new Set(prev)
+      next.has(d) ? next.delete(d) : next.add(d)
+      return next
+    })
+  }
   const [search, setSearch] = useState('')
 
   // 클라이언트 정렬 / ID 범위 필터
@@ -63,33 +95,26 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
-  // 시스템 변경 시 depth 필터 초기화
+  // depth 옵션 리로드 (시스템 필터 변경 시)
+  const systemFilterKey = [...systemFilters].sort().join(',')
   useEffect(() => {
-    setDepth0Filter('')
-    setDepth1Filter('')
-  }, [systemFilter])
-
-  // depth 옵션 리로드
-  useEffect(() => {
-    getDepthValues(systemFilter !== 'all' ? systemFilter : undefined).then(({ depth_0, depth_1ByParent }) => {
+    getDepthValues(systemFilters.size > 0 ? Array.from(systemFilters) : undefined).then(({ depth_0, depth_1ByParent }) => {
       setDepth0Options(depth_0)
       setDepth1ByParent(depth_1ByParent)
     })
-  }, [systemFilter, refreshKey])
-
-  // 0Depth 변경 시 1Depth 초기화
-  useEffect(() => {
-    setDepth1Filter('')
-  }, [depth0Filter])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemFilterKey, refreshKey])
 
   // 요구사항 목록 로드
+  const depth0FilterKey = [...depth0Filters].sort().join(',')
+  const depth1FilterKey = [...depth1Filters].sort().join(',')
   useEffect(() => {
     if (!cycleId) return
     setLoading(true)
     getRequirementsWithResults(cycleId, {
-      systemId: systemFilter !== 'all' ? systemFilter : undefined,
-      depth0: depth0Filter || undefined,
-      depth1: depth1Filter || undefined,
+      systemIds: systemFilters.size > 0 ? Array.from(systemFilters) : undefined,
+      depth0: depth0Filters.size > 0 ? Array.from(depth0Filters) : undefined,
+      depth1: depth1Filters.size > 0 ? Array.from(depth1Filters) : undefined,
       search: search || undefined,
       statusFilter: statusFilter !== 'all' ? statusFilter : undefined,
       scenarioFilter: scenarioFilter !== 'all' ? scenarioFilter : undefined,
@@ -97,7 +122,8 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
     }).then(data => {
       setRequirements(data)
     }).finally(() => setLoading(false))
-  }, [cycleId, systemFilter, depth0Filter, depth1Filter, statusFilter, scenarioFilter, priorityFilter, search, refreshKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cycleId, systemFilterKey, depth0FilterKey, depth1FilterKey, statusFilter, scenarioFilter, priorityFilter, search, refreshKey])
 
   const handleDelete = async () => {
     if (selected.size === 0) return
@@ -174,8 +200,8 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
     }
   }
 
-  const depth1Options = depth0Filter ? (depth1ByParent[depth0Filter] ?? []) : []
-  const hasDepthFilter = !!depth0Filter || !!depth1Filter
+  const depth1Options = [...new Set(Array.from(depth0Filters).flatMap(d => depth1ByParent[d] ?? []))]
+  const hasDepthFilter = depth0Filters.size > 0 || depth1Filters.size > 0
   const hasIdFilter = !!idFrom || !!idTo
 
   // 컬럼 헤더 정렬 아이콘
@@ -188,32 +214,31 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
 
   return (
     <div className="space-y-3">
-      {/* 1행: 시스템 버튼 */}
-      <div className="flex gap-1.5 flex-wrap">
-        <button
-          onClick={() => setSystemFilter('all')}
-          className={`px-3 py-1.5 rounded text-sm font-medium border transition-colors ${
-            systemFilter === 'all'
-              ? 'bg-gray-800 text-white border-gray-800 hover:bg-gray-700'
-              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-          }`}
-        >
-          전체
-        </button>
+      {/* 1행: 시스템 버튼 (다중 선택) */}
+      <div className="flex gap-1.5 flex-wrap items-center">
         {systems.map(s => {
           const c = getSystemColor(s.name)
+          const active = systemFilters.has(s.id)
           return (
             <button
               key={s.id}
-              onClick={() => setSystemFilter(s.id)}
+              onClick={() => toggleSystem(s.id)}
               className={`px-3 py-1.5 rounded text-sm font-medium border transition-colors ${
-                systemFilter === s.id ? c.buttonActive : c.buttonBase
+                active ? c.buttonActive : c.buttonBase
               }`}
             >
               {s.name}
             </button>
           )
         })}
+        {systemFilters.size > 0 && (
+          <button
+            onClick={() => { setSystemFilters(new Set()); setDepth0Filters(new Set()); setDepth1Filters(new Set()) }}
+            className="text-xs text-gray-400 hover:text-gray-700 underline ml-1"
+          >
+            초기화
+          </button>
+        )}
       </div>
 
       {/* 2행: 상태/시나리오/우선순위 드롭다운 + ID 범위 + 검색 */}
@@ -309,9 +334,9 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
             {depth0Options.map(d => (
               <button
                 key={d}
-                onClick={() => setDepth0Filter(depth0Filter === d ? '' : d)}
+                onClick={() => toggleDepth0(d)}
                 className={`px-2.5 py-0.5 rounded-full text-xs border transition-colors ${
-                  depth0Filter === d
+                  depth0Filters.has(d)
                     ? 'bg-gray-800 text-white border-gray-800'
                     : 'bg-white text-gray-600 border-gray-300 hover:border-gray-500'
                 }`}
@@ -321,16 +346,16 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
             ))}
           </div>
 
-          {depth0Filter && depth1Options.length > 0 && (
+          {depth0Filters.size > 0 && depth1Options.length > 0 && (
             <>
               <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />
               <div className="flex flex-wrap gap-1">
                 {depth1Options.map(d => (
                   <button
                     key={d}
-                    onClick={() => setDepth1Filter(depth1Filter === d ? '' : d)}
+                    onClick={() => toggleDepth1(d)}
                     className={`px-2.5 py-0.5 rounded-full text-xs border transition-colors ${
-                      depth1Filter === d
+                      depth1Filters.has(d)
                         ? 'bg-blue-600 text-white border-blue-600'
                         : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
                     }`}
@@ -344,7 +369,7 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
 
           {hasDepthFilter && (
             <button
-              onClick={() => { setDepth0Filter(''); setDepth1Filter('') }}
+              onClick={() => { setDepth0Filters(new Set()); setDepth1Filters(new Set()) }}
               className="text-xs text-gray-400 hover:text-gray-700 underline ml-1"
             >
               초기화
@@ -363,7 +388,7 @@ export function RequirementsTab({ cycleId, systems, onSelectRequirement, selecte
         </span>
         {hasDepthFilter && (
           <span className="text-blue-600">
-            · {depth0Filter}{depth1Filter ? ` › ${depth1Filter}` : ''}
+            · {[...depth0Filters].join(', ')}{depth1Filters.size > 0 ? ` › ${[...depth1Filters].join(', ')}` : ''}
           </span>
         )}
         {hasIdFilter && (

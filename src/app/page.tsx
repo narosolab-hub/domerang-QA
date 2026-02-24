@@ -9,6 +9,7 @@ import { CycleSelector } from '@/components/CycleSelector'
 import { DashboardTab } from '@/components/DashboardTab'
 import { RequirementsTab } from '@/components/RequirementsTab'
 import { BacklogTab } from '@/components/BacklogTab'
+import { IssueTab } from '@/components/IssueTab'
 import { SidePanel } from '@/components/SidePanel'
 import { UploadModal } from '@/components/UploadModal'
 import { AddRequirementModal } from '@/components/AddRequirementModal'
@@ -46,6 +47,7 @@ export default function Home() {
     if (activeTab === 'dashboard' || activeTab === 'backlog') {
       setActiveTab('requirements')
     }
+    // 'issues' 탭에서는 탭 전환 없이 사이드패널만 열림
   }
 
   if (loading) {
@@ -93,6 +95,7 @@ export default function Home() {
             <TabsTrigger value="dashboard">대시보드</TabsTrigger>
             <TabsTrigger value="requirements">요구사항</TabsTrigger>
             <TabsTrigger value="backlog">백로그</TabsTrigger>
+            <TabsTrigger value="issues">이슈</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard">
@@ -117,6 +120,15 @@ export default function Home() {
 
           <TabsContent value="backlog">
             <BacklogTab
+              cycleId={selectedCycleId}
+              systems={systems}
+              onSelectRequirement={handleSelectRequirement}
+              refreshKey={refreshKey}
+            />
+          </TabsContent>
+
+          <TabsContent value="issues">
+            <IssueTab
               cycleId={selectedCycleId}
               systems={systems}
               onSelectRequirement={handleSelectRequirement}

@@ -15,8 +15,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import { StatusBadge } from './StatusBadge'
 import { updateRequirement, upsertTestResult, logChange, getChangeHistory, deleteRequirements, getRequirementByDisplayId, searchRequirementsForRelated, getRequirementNamesByDisplayIds } from '@/lib/queries'
-import type { Requirement, TestResult, TestStatus, Priority, RequirementChange, System, IssueItem } from '@/lib/types'
-import { getSystemColor } from '@/lib/types'
+import type { Requirement, TestResult, TestStatus, Priority, RequirementChange, System, IssueItem, Severity } from '@/lib/types'
+import { getSystemColor, SEVERITY_STYLE } from '@/lib/types'
 import {
   X, ExternalLink, ChevronDown, ChevronUp,
   PanelRightOpen, PanelRightClose, History, RotateCcw, Pencil, Trash2, Plus,
@@ -51,6 +51,35 @@ function formatRelativeTime(dateStr: string): string {
 
 function truncate(s: string, n = 22): string {
   return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+// ── URL 자동 링크 렌더러 ──────────────────────────────────────────────────────
+function AutoLink({ text }: { text: string }) {
+  const urlRegex = /https?:\/\/[^\s<>"']+/g
+  const parts: Array<{ type: 'text' | 'url'; value: string }> = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push({ type: 'text', value: text.slice(lastIndex, match.index) })
+    parts.push({ type: 'url', value: match[0] })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) parts.push({ type: 'text', value: text.slice(lastIndex) })
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.type === 'url' ? (
+          <a key={i} href={p.value} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            className="text-blue-600 hover:underline break-all">
+            {p.value}
+          </a>
+        ) : (
+          <span key={i}>{p.value}</span>
+        )
+      )}
+    </>
+  )
 }
 
 const FIELD_STYLE: Record<string, { dot: string; label: string }> = {
@@ -90,6 +119,17 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
   const [editDepth3,      setEditDepth3]      = useState('')
   const [savingBasic,     setSavingBasic]     = useState(false)
 
+  // 링크 표시 (로컬 상태 — prop은 저장 후 갱신 안 됨)
+  const [displayScenarioLink, setDisplayScenarioLink] = useState('')
+  const [displayBacklogLink,  setDisplayBacklogLink]  = useState('')
+  // 링크 편집
+  const [editScenarioLink, setEditScenarioLink] = useState('')
+  const [editBacklogLink,  setEditBacklogLink]  = useState('')
+  // 시나리오 뷰/편집 토글
+  const [editingScenario,  setEditingScenario]  = useState(false)
+  // 이슈 항목 뷰/편집 토글 (편집 중인 인덱스, null = 읽기 모드)
+  const [editingIssueIdx,  setEditingIssueIdx]  = useState<number | null>(null)
+
   const [deleteOpen,   setDeleteOpen]   = useState(false)
   const [deleting,     setDeleting]     = useState(false)
 
@@ -119,6 +159,8 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
         text: i.text,
         raised: (i as any).raised ?? false,
         fixed: i.fixed ?? false,
+        issueNo: i.issueNo,
+        severity: i.severity,
       })))
     } else if (requirement.currentResult?.issue_ids) {
       setIssueItems([{ text: requirement.currentResult.issue_ids, raised: false, fixed: false }])
@@ -149,6 +191,12 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
     setEditDepth1(requirement.depth_1 ?? '')
     setEditDepth2(requirement.depth_2 ?? '')
     setEditDepth3(requirement.depth_3 ?? '')
+    setDisplayScenarioLink(requirement.scenario_link ?? '')
+    setDisplayBacklogLink(requirement.backlog_link ?? '')
+    setEditScenarioLink(requirement.scenario_link ?? '')
+    setEditBacklogLink(requirement.backlog_link ?? '')
+    setEditingScenario(false)
+    setEditingIssueIdx(null)
     // 이력 불러오기
     getChangeHistory(requirement.id).then(setHistory).catch(() => setHistory([]))
   }, [requirement?.id])
@@ -220,10 +268,33 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
         })
       }
 
+      if (editScenarioLink !== displayScenarioLink) {
+        updates.scenario_link = editScenarioLink || null
+        await logChange({
+          requirement_id: requirement.id,
+          changed_field: '시나리오 링크',
+          old_value: displayScenarioLink || null,
+          new_value: editScenarioLink || null,
+        })
+      }
+
+      if (editBacklogLink !== displayBacklogLink) {
+        updates.backlog_link = editBacklogLink || null
+        await logChange({
+          requirement_id: requirement.id,
+          changed_field: '백로그 링크',
+          old_value: displayBacklogLink || null,
+          new_value: editBacklogLink || null,
+        })
+      }
+
       if (Object.keys(updates).length > 0) {
         await updateRequirement(requirement.id, updates)
       }
 
+      // 로컬 표시 상태 즉시 업데이트 (prop은 갱신되지 않으므로)
+      setDisplayScenarioLink(editScenarioLink)
+      setDisplayBacklogLink(editBacklogLink)
       getChangeHistory(requirement.id).then(setHistory)
       onUpdate()
       setEditingBasic(false)
@@ -241,6 +312,8 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
     setEditDepth1(requirement.depth_1 ?? '')
     setEditDepth2(requirement.depth_2 ?? '')
     setEditDepth3(requirement.depth_3 ?? '')
+    setEditScenarioLink(displayScenarioLink)
+    setEditBacklogLink(displayBacklogLink)
     setEditingBasic(false)
   }
 
@@ -451,12 +524,12 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
 
     <Sheet open={!!requirement} onOpenChange={onClose}>
       <SheetContent
-        className="overflow-y-auto p-0 transition-[width] duration-200 sm:max-w-none"
-        style={{ width: wide ? '50vw' : '420px' }}
+        className="flex flex-col overflow-hidden p-0 transition-[width] duration-200 sm:max-w-none"
+        style={{ width: wide ? '65vw' : '420px' }}
         showCloseButton={false}
       >
         {/* ── 스티키 헤더 ────────────────────────────────────────────────── */}
-        <div className="sticky top-0 bg-white z-10 border-b">
+        <div className="flex-none bg-white z-10 border-b">
           <SheetHeader className="px-5 py-4">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -498,7 +571,10 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
           </SheetHeader>
         </div>
 
-        <div className="px-5 py-4 space-y-5">
+        <div className={wide ? 'flex flex-1 min-h-0' : 'flex-1 overflow-y-auto px-5 py-4 space-y-5'}>
+
+          {/* ══ 왼쪽 컬럼: 스펙 참조 ══════════════════════════════════════════ */}
+          <div className={wide ? 'w-[48%] overflow-y-auto px-5 py-4 space-y-5 border-r border-gray-100' : 'contents'}>
 
           {/* ── 기본 정보 ─────────────────────────────────────────────────── */}
           <section>
@@ -578,23 +654,31 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
                     })}
                   </div>
                 </div>
-                {(requirement.scenario_link || requirement.backlog_link) && (
-                  <div className="flex gap-2 items-center flex-wrap pt-0.5">
-                    <span className="text-gray-500 w-14 shrink-0">링크</span>
-                    {requirement.scenario_link && (
-                      <a href={requirement.scenario_link} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                        <ExternalLink className="h-3 w-3" /> 시나리오
-                      </a>
-                    )}
-                    {requirement.backlog_link && (
-                      <a href={requirement.backlog_link} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                        <ExternalLink className="h-3 w-3" /> 백로그
-                      </a>
-                    )}
-                  </div>
-                )}
+                <div className="flex gap-2 items-center flex-wrap pt-0.5">
+                  <span className="text-gray-500 w-14 shrink-0">링크</span>
+                  {displayScenarioLink ? (
+                    <a href={displayScenarioLink} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                      <ExternalLink className="h-3 w-3" /> 시나리오
+                    </a>
+                  ) : (
+                    <span className="text-xs text-gray-300">시나리오 링크 없음</span>
+                  )}
+                  {displayBacklogLink ? (
+                    <a href={displayBacklogLink} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                      <ExternalLink className="h-3 w-3" /> 백로그
+                    </a>
+                  ) : (
+                    <span className="text-xs text-gray-300 ml-2">백로그 링크 없음</span>
+                  )}
+                  <button
+                    onClick={() => setEditingBasic(true)}
+                    className="ml-1 text-xs text-gray-400 hover:text-blue-600 underline"
+                  >
+                    수정
+                  </button>
+                </div>
 
                 {/* 관련 요구사항 */}
                 <div className="flex gap-2 items-start pt-0.5">
@@ -740,6 +824,26 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
                 <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
                   ⚠️ 기초 데이터 변경 시 필터/통계에 즉시 반영됩니다
                 </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">시나리오 링크</label>
+                    <Input
+                      value={editScenarioLink}
+                      onChange={e => setEditScenarioLink(e.target.value)}
+                      placeholder="https://..."
+                      className="text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">백로그 링크</label>
+                    <Input
+                      value={editBacklogLink}
+                      onChange={e => setEditBacklogLink(e.target.value)}
+                      placeholder="https://..."
+                      className="text-sm"
+                    />
+                  </div>
+                </div>
               </div>
             )}
           </section>
@@ -752,7 +856,7 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
               <section>
                 <h3 className="text-sm font-semibold mb-2 text-gray-700">기존 요구사항</h3>
                 <p className="text-sm text-gray-600 bg-gray-50 rounded p-3 whitespace-pre-wrap leading-relaxed">
-                  {requirement.original_spec}
+                  <AutoLink text={requirement.original_spec} />
                 </p>
               </section>
               <Separator />
@@ -789,7 +893,12 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
             )}
           </section>
 
-          <Separator />
+          </div>{/* ══ end 왼쪽 컬럼 ═══════════════════════════════════════════════════ */}
+
+          {!wide && <Separator />}
+
+          {/* ══ 오른쪽 컬럼: 테스트 실행 ════════════════════════════════════ */}
+          <div className={wide ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'contents'}>
 
           {/* ── 기대 결과 ─────────────────────────────────────────────────── */}
           <section>
@@ -806,17 +915,50 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
 
           {/* ── 테스트 시나리오 (접기/펼치기) ─────────────────────────────── */}
           <section>
-            <button
-              className="flex items-center gap-2 w-full text-sm font-semibold text-gray-700 mb-2"
-              onClick={() => setScenarioOpen(!scenarioOpen)}
-            >
-              테스트 시나리오
-              {scenarioOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              {(requirement.precondition || requirement.test_steps) && (
-                <Badge variant="secondary" className="text-xs ml-auto">작성됨</Badge>
+            <div className="flex items-center justify-between mb-2">
+              <button
+                className="flex items-center gap-2 text-sm font-semibold text-gray-700"
+                onClick={() => setScenarioOpen(!scenarioOpen)}
+              >
+                테스트 시나리오
+                {scenarioOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {(requirement.precondition || requirement.test_steps) && (
+                  <Badge variant="secondary" className="text-xs ml-1">작성됨</Badge>
+                )}
+              </button>
+              {scenarioOpen && !editingScenario && (
+                <button
+                  onClick={() => setEditingScenario(true)}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 border border-gray-200 hover:border-gray-400 rounded px-2 py-0.5 transition-colors"
+                >
+                  <Pencil className="h-3 w-3" /> 수정
+                </button>
               )}
-            </button>
-            {scenarioOpen && (
+            </div>
+
+            {/* 읽기 모드 */}
+            {scenarioOpen && !editingScenario && (
+              <div className="text-sm text-gray-600 bg-gray-50 rounded p-3 space-y-3">
+                {precondition && (
+                  <div>
+                    <span className="text-xs text-gray-400 block mb-0.5">사전 조건</span>
+                    <p className="whitespace-pre-wrap leading-relaxed"><AutoLink text={precondition} /></p>
+                  </div>
+                )}
+                {testSteps && (
+                  <div>
+                    <span className="text-xs text-gray-400 block mb-0.5">테스트 순서</span>
+                    <p className="whitespace-pre-wrap leading-relaxed"><AutoLink text={testSteps} /></p>
+                  </div>
+                )}
+                {!precondition && !testSteps && (
+                  <p className="text-xs text-gray-400 text-center py-1">작성된 시나리오가 없습니다</p>
+                )}
+              </div>
+            )}
+
+            {/* 편집 모드 */}
+            {scenarioOpen && editingScenario && (
               <div className="space-y-3">
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">사전 조건</label>
@@ -827,6 +969,14 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
                   <label className="text-xs text-gray-500 mb-1 block">테스트 순서</label>
                   <Textarea value={testSteps} onChange={e => setTestSteps(e.target.value)}
                     placeholder="1. 메인 페이지 접속&#10;2. ..." className="text-sm h-24" />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setEditingScenario(false)}
+                    className="text-xs px-2.5 py-0.5 rounded border border-gray-300 text-gray-500 hover:border-gray-500 transition-colors"
+                  >
+                    완료
+                  </button>
                 </div>
               </div>
             )}
@@ -910,71 +1060,135 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
             </div>
 
             {/* 이슈 관리 */}
-            <div className="mt-4 border rounded-lg p-3 space-y-3 bg-red-50 border-red-100">
-              <h4 className="text-sm font-semibold text-red-700">이슈 관리</h4>
+            <div className="mt-4 border rounded-lg p-3 space-y-2 bg-gray-50 border-gray-200">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">이슈 관리</h4>
 
               {/* 이슈 항목 목록 */}
-              <div className="space-y-2">
-                {issueItems.map((item, idx) => (
-                  <div key={idx} className="bg-white border border-gray-200 rounded-lg p-2 space-y-1.5">
-                    {/* 텍스트 + 삭제 */}
-                    <div className="flex items-start gap-1.5">
-                      <textarea
-                        value={item.text}
-                        onChange={e => {
-                          const next = [...issueItems]
-                          next[idx] = { ...next[idx], text: e.target.value }
-                          setIssueItems(next)
-                        }}
-                        onInput={e => {
-                          const el = e.currentTarget
-                          el.style.height = 'auto'
-                          el.style.height = `${el.scrollHeight}px`
-                        }}
-                        rows={1}
-                        placeholder="이슈 내용 입력"
-                        className="flex-1 text-sm px-0 py-0 border-none outline-none bg-transparent placeholder:text-gray-300 resize-none overflow-hidden leading-relaxed"
-                      />
-                      <button
-                        onClick={() => setIssueItems(issueItems.filter((_, i) => i !== idx))}
-                        className="shrink-0 text-gray-300 hover:text-red-400 transition-colors mt-0.5"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+              <div className="space-y-1.5">
+                {issueItems.map((item, idx) => {
+                  const leftBorder =
+                    item.severity === '크리티컬' ? 'border-l-red-500' :
+                    item.severity === '하이'     ? 'border-l-orange-500' :
+                    item.severity === '미디엄'   ? 'border-l-yellow-400' :
+                    item.severity === '로우'     ? 'border-l-blue-400' :
+                    'border-l-gray-300'
+                  return (
+                    <div key={idx} className={`bg-white rounded-lg overflow-hidden border border-gray-200 border-l-4 ${leftBorder}`}>
+
+                      {/* 텍스트 영역 */}
+                      <div className="flex items-start gap-2 px-3 py-2.5">
+                        {editingIssueIdx === idx ? (
+                          <textarea
+                            value={item.text}
+                            onChange={e => {
+                              const next = [...issueItems]
+                              next[idx] = { ...next[idx], text: e.target.value }
+                              setIssueItems(next)
+                            }}
+                            onInput={e => {
+                              const el = e.currentTarget
+                              el.style.height = 'auto'
+                              el.style.height = `${el.scrollHeight}px`
+                            }}
+                            onBlur={() => setEditingIssueIdx(null)}
+                            autoFocus
+                            rows={1}
+                            placeholder="이슈 내용 입력"
+                            className="flex-1 text-sm border-none outline-none bg-transparent placeholder:text-gray-300 resize-none overflow-hidden leading-relaxed"
+                          />
+                        ) : (
+                          <div
+                            onClick={() => setEditingIssueIdx(idx)}
+                            className="flex-1 text-sm leading-relaxed whitespace-pre-wrap break-words min-h-[1.25rem] text-gray-700 cursor-text"
+                          >
+                            {item.text
+                              ? <AutoLink text={item.text} />
+                              : <span className="text-gray-300">이슈 내용 입력</span>
+                            }
+                          </div>
+                        )}
+                        <button
+                          onClick={() => setIssueItems(issueItems.filter((_, i) => i !== idx))}
+                          className="shrink-0 text-gray-300 hover:text-red-400 transition-colors"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
+                      {/* 액션 바 */}
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border-t border-gray-100">
+                        {/* 심각도 */}
+                        <select
+                          value={item.severity ?? ''}
+                          onChange={e => {
+                            const next = [...issueItems]
+                            next[idx] = { ...next[idx], severity: (e.target.value as Severity) || undefined }
+                            setIssueItems(next)
+                          }}
+                          className={`text-[11px] font-medium border rounded px-1.5 py-0.5 outline-none cursor-pointer transition-colors ${
+                            item.severity ? SEVERITY_STYLE[item.severity].badge : 'bg-white text-gray-400 border-gray-200'
+                          }`}
+                        >
+                          <option value="">심각도</option>
+                          {(['크리티컬', '하이', '미디엄', '로우'] as Severity[]).map(sev => (
+                            <option key={sev} value={sev}>{sev}</option>
+                          ))}
+                        </select>
+
+                        <div className="flex-1" />
+
+                        {/* 이슈라이징 */}
+                        <button
+                          onClick={() => {
+                            const next = [...issueItems]
+                            next[idx] = { ...next[idx], raised: !next[idx].raised }
+                            setIssueItems(next)
+                          }}
+                          className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                            item.raised
+                              ? 'bg-orange-500 text-white border-orange-500'
+                              : 'bg-white text-gray-400 border-gray-200 hover:border-orange-300 hover:text-orange-500'
+                          }`}
+                        >
+                          {item.raised ? '↑ 라이징 ✓' : '↑ 라이징'}
+                        </button>
+                        {item.raised && (
+                          <div className="flex items-center gap-0.5 border border-orange-200 rounded bg-orange-50 px-1.5 py-0.5">
+                            <span className="text-[11px] font-mono text-orange-400">#</span>
+                            <input
+                              type="text"
+                              value={(item.issueNo ?? '').replace(/^#+/, '')}
+                              onChange={e => {
+                                const next = [...issueItems]
+                                next[idx] = { ...next[idx], issueNo: e.target.value.replace(/^#+/, '') }
+                                setIssueItems(next)
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              placeholder="번호"
+                              className="w-12 text-[11px] font-mono bg-transparent text-orange-700 placeholder:text-orange-300 outline-none"
+                            />
+                          </div>
+                        )}
+                        {/* 수정완료 */}
+                        <button
+                          onClick={() => {
+                            const next = [...issueItems]
+                            next[idx] = { ...next[idx], fixed: !next[idx].fixed }
+                            setIssueItems(next)
+                          }}
+                          className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                            item.fixed
+                              ? 'bg-green-500 text-white border-green-500'
+                              : 'bg-white text-gray-400 border-gray-200 hover:border-green-300 hover:text-green-500'
+                          }`}
+                        >
+                          {item.fixed ? '✓ 수정완료' : '수정완료'}
+                        </button>
+                      </div>
+
                     </div>
-                    {/* 항목별 토글 */}
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => {
-                          const next = [...issueItems]
-                          next[idx] = { ...next[idx], raised: !next[idx].raised }
-                          setIssueItems(next)
-                        }}
-                        className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
-                          item.raised
-                            ? 'bg-orange-500 text-white border-orange-500'
-                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-orange-300 hover:text-orange-500'
-                        }`}
-                      >
-                        이슈라이징 {item.raised ? '✓' : ''}
-                      </button>
-                      <button
-                        onClick={() => {
-                          const next = [...issueItems]
-                          next[idx] = { ...next[idx], fixed: !next[idx].fixed }
-                          setIssueItems(next)
-                        }}
-                        className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
-                          item.fixed
-                            ? 'bg-green-500 text-white border-green-500'
-                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-green-300 hover:text-green-500'
-                        }`}
-                      >
-                        수정완료 {item.fixed ? '✓' : ''}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
                 <button
                   onClick={() => setIssueItems([...issueItems, { text: '', raised: false, fixed: false }])}
                   className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 border border-dashed border-gray-300 hover:border-gray-500 rounded px-3 py-1.5 w-full justify-center transition-colors bg-white"
@@ -1056,7 +1270,9 @@ export function SidePanel({ requirement, cycleId, systems, onClose, onUpdate, on
               {saving ? '저장 중...' : saveSuccess ? '✓ 저장됨' : '저장'}
             </Button>
           </div>
-        </div>
+
+          </div>{/* ══ end 오른쪽 컬럼 ══════════════════════════════════════════════════ */}
+        </div>{/* ══ end 컨텐츠 래퍼 ══════════════════════════════════════════════════ */}
       </SheetContent>
     </Sheet>
     </>
