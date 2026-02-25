@@ -59,10 +59,14 @@ export async function getRequirements(filters?: {
 }
 
 // depth 계층 값 목록 조회 (cascade 필터용)
-export async function getDepthValues(systemIds?: string[]): Promise<{ depth_0: string[]; depth_1ByParent: Record<string, string[]> }> {
+export async function getDepthValues(systemIds?: string[]): Promise<{
+  depth_0: string[]
+  depth_1ByParent: Record<string, string[]>
+  depth_2ByParent: Record<string, string[]>
+}> {
   let query = supabase
     .from('requirements')
-    .select('depth_0, depth_1')
+    .select('depth_0, depth_1, depth_2')
 
   if (systemIds && systemIds.length > 0) {
     query = query.in('system_id', systemIds)
@@ -85,7 +89,19 @@ export async function getDepthValues(systemIds?: string[]): Promise<{ depth_0: s
     depth_1ByParent[key].sort()
   }
 
-  return { depth_0, depth_1ByParent }
+  const depth_2ByParent: Record<string, string[]> = {}
+  for (const row of rows) {
+    if (!row.depth_1 || !row.depth_2) continue
+    if (!depth_2ByParent[row.depth_1]) depth_2ByParent[row.depth_1] = []
+    if (!depth_2ByParent[row.depth_1].includes(row.depth_2)) {
+      depth_2ByParent[row.depth_1].push(row.depth_2)
+    }
+  }
+  for (const key of Object.keys(depth_2ByParent)) {
+    depth_2ByParent[key].sort()
+  }
+
+  return { depth_0, depth_1ByParent, depth_2ByParent }
 }
 
 export async function getRequirementsWithResults(cycleId: string, filters?: {
@@ -96,6 +112,7 @@ export async function getRequirementsWithResults(cycleId: string, filters?: {
   priorityFilter?: string
   depth0?: string[]
   depth1?: string[]
+  depth2?: string[]
 }): Promise<(Requirement & { currentResult?: TestResult })[]> {
   let query = supabase
     .from('requirements')
@@ -110,6 +127,9 @@ export async function getRequirementsWithResults(cycleId: string, filters?: {
   }
   if (filters?.depth1 && filters.depth1.length > 0) {
     query = query.in('depth_1', filters.depth1)
+  }
+  if (filters?.depth2 && filters.depth2.length > 0) {
+    query = query.in('depth_2', filters.depth2)
   }
   if (filters?.search) {
     query = query.or(
