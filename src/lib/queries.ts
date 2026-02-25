@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Requirement, System, TestCycle, TestResult, TestStatus, StatusCount, SystemStats, RequirementChange, IssueItem } from './types'
+import type { Requirement, System, TestCycle, TestResult, TestStatus, StatusCount, SystemStats, RequirementChange, IssueItem, TestScenario, ScenarioRequirement, ScenarioResult } from './types'
 
 // ─── Systems ────────────────────────────────────────────────────────────────
 
@@ -446,6 +446,174 @@ export async function getIssueStats(cycleId: string): Promise<IssueStats> {
     issueRaisedCount: rows.filter(r => r.issue_raised).length,
     issueFixedCount: rows.filter(r => r.issue_fixed).length,
   }
+}
+
+// ─── Test Scenarios ───────────────────────────────────────────────────────────
+
+export type ScenarioWithMeta = TestScenario & {
+  result?: ScenarioResult
+  reqCount: number
+}
+
+export async function getScenarios(
+  cycleId: string,
+  filters?: { scenarioType?: string; search?: string; status?: string }
+): Promise<ScenarioWithMeta[]> {
+  let query = supabase
+    .from('test_scenarios')
+    .select('*, scenario_requirements(id), scenario_results(*)')
+    .order('created_at', { ascending: false })
+
+  if (filters?.status && filters.status !== 'all') {
+    query = query.eq('status', filters.status)
+  }
+  if (filters?.scenarioType && filters.scenarioType !== 'all') {
+    query = query.eq('scenario_type', filters.scenarioType)
+  }
+  if (filters?.search) {
+    query = query.ilike('title', `%${filters.search}%`)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+
+  return ((data ?? []) as any[]).map(row => ({
+    ...row,
+    reqCount: (row.scenario_requirements ?? []).length,
+    result: (row.scenario_results ?? []).find((r: any) => r.cycle_id === cycleId),
+    scenario_requirements: undefined,
+    scenario_results: undefined,
+  }))
+}
+
+export type ScenarioDetail = TestScenario & {
+  linkedRequirements: (ScenarioRequirement & {
+    requirement: Requirement & { systems?: System }
+  })[]
+  result?: ScenarioResult
+}
+
+export async function getScenarioDetail(
+  id: string,
+  cycleId: string
+): Promise<ScenarioDetail | null> {
+  const { data, error } = await supabase
+    .from('test_scenarios')
+    .select(`
+      *,
+      scenario_requirements(*, requirements(*, systems(id, name))),
+      scenario_results(*)
+    `)
+    .eq('id', id)
+    .single()
+
+  if (error || !data) return null
+
+  const row = data as any
+  const linkedRequirements = (row.scenario_requirements ?? [])
+    .sort((a: any, b: any) => a.order_index - b.order_index)
+    .map((sr: any) => ({
+      id: sr.id,
+      scenario_id: sr.scenario_id,
+      requirement_id: sr.requirement_id,
+      order_index: sr.order_index,
+      verify_note: sr.verify_note ?? null,
+      requirement: sr.requirements as Requirement & { systems?: System },
+    }))
+
+  return {
+    ...row,
+    linkedRequirements,
+    result: (row.scenario_results ?? []).find((r: any) => r.cycle_id === cycleId),
+    scenario_requirements: undefined,
+    scenario_results: undefined,
+  }
+}
+
+export async function createScenario(data: {
+  title: string
+  scenario_type: string
+  business_context?: string | null
+  precondition?: string | null
+  steps?: string
+  expected_result?: string
+  status?: string
+  ai_generated?: boolean
+}): Promise<TestScenario> {
+  const { data: created, error } = await supabase
+    .from('test_scenarios')
+    .insert(data)
+    .select()
+    .single()
+  if (error) throw error
+  return created as TestScenario
+}
+
+export async function updateScenario(
+  id: string,
+  data: Partial<Omit<TestScenario, 'id' | 'created_at' | 'updated_at'>>
+): Promise<void> {
+  const { error } = await supabase
+    .from('test_scenarios')
+    .update(data)
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteScenario(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('test_scenarios')
+    .delete()
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function setScenarioRequirements(
+  scenarioId: string,
+  items: Array<{ requirement_id: string; order_index: number; verify_note?: string }>
+): Promise<void> {
+  const { error: delError } = await supabase
+    .from('scenario_requirements')
+    .delete()
+    .eq('scenario_id', scenarioId)
+  if (delError) throw delError
+
+  if (items.length === 0) return
+
+  const { error: insError } = await supabase
+    .from('scenario_requirements')
+    .insert(items.map(item => ({ ...item, scenario_id: scenarioId })))
+  if (insError) throw insError
+}
+
+export async function upsertScenarioResult(data: {
+  scenario_id: string
+  cycle_id: string
+  status: TestStatus
+  tester?: string
+  note?: string
+  issue_items?: IssueItem[]
+}): Promise<ScenarioResult> {
+  const { data: result, error } = await supabase
+    .from('scenario_results')
+    .upsert(
+      { ...data, tested_at: new Date().toISOString() },
+      { onConflict: 'scenario_id,cycle_id' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return result as ScenarioResult
+}
+
+export async function getRequirementsByIds(ids: string[]): Promise<(Requirement & { systems?: System })[]> {
+  if (ids.length === 0) return []
+  const { data, error } = await supabase
+    .from('requirements')
+    .select('id, display_id, feature_name, depth_0, depth_1, original_spec, current_policy, systems(id, name)')
+    .in('id', ids)
+  if (error) throw error
+  return (data ?? []) as unknown as (Requirement & { systems?: System })[]
 }
 
 export async function getNextRecommended(cycleId: string, limit = 5): Promise<Requirement[]> {

@@ -149,6 +149,46 @@ export type Database = {
   }
 }
 
+// ── 테스트 시나리오 ──────────────────────────────────────────────────────────
+
+export type ScenarioType = 'integration' | 'unit' | 'e2e'
+export type ScenarioStatus = 'active' | 'draft' | 'deprecated'
+
+export interface TestScenario {
+  id: string
+  title: string
+  scenario_type: ScenarioType
+  business_context: string | null
+  precondition: string | null
+  steps: string
+  expected_result: string
+  status: ScenarioStatus
+  ai_generated: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ScenarioRequirement {
+  id: string
+  scenario_id: string
+  requirement_id: string
+  order_index: number
+  verify_note: string | null
+  requirement?: Requirement & { systems?: System }
+}
+
+export interface ScenarioResult {
+  id: string
+  scenario_id: string
+  cycle_id: string
+  status: TestStatus
+  tester: string | null
+  tested_at: string | null
+  note: string | null
+  issue_items: IssueItem[]
+  created_at: string
+}
+
 // 통계 타입
 export interface StatusCount {
   Pass: number

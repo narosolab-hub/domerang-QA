@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { getDashboardStats, getDepthGroupStats, getIssueStats } from '@/lib/queries'
+import { AIInsightsCard } from '@/components/AIInsightsCard'
 import type { StatusCount, SystemStats, TestCycle } from '@/lib/types'
 import type { DepthGroupStat, IssueStats } from '@/lib/queries'
 
@@ -403,6 +404,8 @@ export function DashboardTab({ cycleId, cycle, onSelectRequirement, refreshKey }
           </Card>
         )
       })()}
+
+      <AIInsightsCard cycleId={cycleId} />
     </div>
   )
 }

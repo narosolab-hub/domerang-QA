@@ -10,6 +10,7 @@ import { DashboardTab } from '@/components/DashboardTab'
 import { RequirementsTab } from '@/components/RequirementsTab'
 import { BacklogTab } from '@/components/BacklogTab'
 import { IssueTab } from '@/components/IssueTab'
+import { ScenarioTab } from '@/components/ScenarioTab'
 import { SidePanel } from '@/components/SidePanel'
 import { UploadModal } from '@/components/UploadModal'
 import { AddRequirementModal } from '@/components/AddRequirementModal'
@@ -96,6 +97,7 @@ export default function Home() {
             <TabsTrigger value="requirements">요구사항</TabsTrigger>
             <TabsTrigger value="backlog">백로그</TabsTrigger>
             <TabsTrigger value="issues">이슈</TabsTrigger>
+            <TabsTrigger value="scenarios">시나리오</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard">
@@ -129,6 +131,14 @@ export default function Home() {
 
           <TabsContent value="issues">
             <IssueTab
+              cycleId={selectedCycleId}
+              systems={systems}
+              onSelectRequirement={handleSelectRequirement}
+              refreshKey={refreshKey}
+            />
+          </TabsContent>
+          <TabsContent value="scenarios">
+            <ScenarioTab
               cycleId={selectedCycleId}
               systems={systems}
               onSelectRequirement={handleSelectRequirement}
