@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Requirement, System, TestCycle, TestResult, TestStatus, StatusCount, SystemStats, RequirementChange, IssueItem, TestScenario, ScenarioRequirement, ScenarioResult } from './types'
+import type { Requirement, System, TestCycle, TestResult, TestStatus, StatusCount, SystemStats, RequirementChange, IssueItem, TestScenario, ScenarioRequirement, ScenarioResult, ScenarioType } from './types'
 
 // ─── Systems ────────────────────────────────────────────────────────────────
 
@@ -428,23 +428,121 @@ export async function getDepthGroupStats(cycleId: string): Promise<DepthGroupSta
 export interface IssueStats {
   failCount: number
   blockCount: number
-  issueRaisedCount: number
-  issueFixedCount: number
+  issueRaisedCount: number   // 요구사항 단위로 전체 라이징 완료된 건수
+  issueFixedCount: number    // 요구사항 단위로 전체 수정 완료된 건수
+  itemsTotal: number         // 이슈 항목 총 개수
+  itemsRaised: number        // 라이징된 항목 수
+  itemsFixed: number         // 수정 완료된 항목 수
 }
 
 export async function getIssueStats(cycleId: string): Promise<IssueStats> {
   const { data } = await supabase
     .from('test_results')
-    .select('status, issue_raised, issue_fixed')
+    .select('status, issue_raised, issue_fixed, issue_items')
     .eq('cycle_id', cycleId)
     .in('status', ['Fail', 'Block'])
 
   const rows = data ?? []
+  let itemsTotal = 0, itemsRaised = 0, itemsFixed = 0
+  for (const r of rows) {
+    const items = (r.issue_items ?? []) as IssueItem[]
+    itemsTotal += items.length
+    itemsRaised += items.filter(i => i.raised).length
+    itemsFixed += items.filter(i => i.fixed).length
+  }
   return {
     failCount: rows.filter(r => r.status === 'Fail').length,
     blockCount: rows.filter(r => r.status === 'Block').length,
     issueRaisedCount: rows.filter(r => r.issue_raised).length,
     issueFixedCount: rows.filter(r => r.issue_fixed).length,
+    itemsTotal,
+    itemsRaised,
+    itemsFixed,
+  }
+}
+
+export interface ScenarioIssueStats {
+  failCount: number
+  blockCount: number
+  itemsTotal: number
+  itemsRaised: number
+  itemsFixed: number
+}
+
+export async function getScenarioIssueStats(cycleId: string): Promise<ScenarioIssueStats> {
+  const { data } = await supabase
+    .from('scenario_results')
+    .select('status, issue_items')
+    .eq('cycle_id', cycleId)
+    .in('status', ['Fail', 'Block'])
+
+  const rows = data ?? []
+  let itemsTotal = 0, itemsRaised = 0, itemsFixed = 0
+  for (const r of rows) {
+    const items = (r.issue_items ?? []) as IssueItem[]
+    itemsTotal += items.length
+    itemsRaised += items.filter(i => i.raised).length
+    itemsFixed += items.filter(i => i.fixed).length
+  }
+  return {
+    failCount: rows.filter(r => r.status === 'Fail').length,
+    blockCount: rows.filter(r => r.status === 'Block').length,
+    itemsTotal,
+    itemsRaised,
+    itemsFixed,
+  }
+}
+
+// ─── Scenario Stats ───────────────────────────────────────────────────────────
+
+export interface ScenarioStats {
+  total: number
+  byStatus: Record<string, number>
+  progressRate: number
+  byType: { type: string; label: string; total: number; byStatus: Record<string, number> }[]
+}
+
+export async function getScenarioStats(cycleId: string): Promise<ScenarioStats> {
+  const [{ data: scenarios }, { data: results }] = await Promise.all([
+    supabase.from('test_scenarios').select('id, scenario_type').eq('status', 'active'),
+    supabase.from('scenario_results').select('scenario_id, status').eq('cycle_id', cycleId),
+  ])
+
+  const scenarioList = scenarios ?? []
+  const resultMap = new Map((results ?? []).map(r => [r.scenario_id, r.status as string]))
+
+  const emptyByStatus = () => ({ Pass: 0, Fail: 0, Block: 0, 'In Progress': 0, '미테스트': 0 } as Record<string, number>)
+
+  const total = emptyByStatus()
+  const byType: Record<string, Record<string, number>> = {
+    integration: emptyByStatus(),
+    unit: emptyByStatus(),
+    e2e: emptyByStatus(),
+  }
+
+  for (const s of scenarioList) {
+    const status = resultMap.get(s.id) ?? '미테스트'
+    total[status] = (total[status] ?? 0) + 1
+    const t = byType[s.scenario_type]
+    if (t) t[status] = (t[status] ?? 0) + 1
+  }
+
+  const totalCount = scenarioList.length
+  const done = (total.Pass ?? 0) + (total.Fail ?? 0) + (total.Block ?? 0) + (total['In Progress'] ?? 0)
+  const TYPE_LABELS: Record<string, string> = { integration: '통합', unit: '단위', e2e: 'E2E' }
+
+  return {
+    total: totalCount,
+    byStatus: total,
+    progressRate: totalCount > 0 ? Math.round((done / totalCount) * 100) : 0,
+    byType: ['integration', 'unit', 'e2e']
+      .map(type => ({
+        type,
+        label: TYPE_LABELS[type],
+        total: Object.values(byType[type]).reduce((a, b) => a + b, 0),
+        byStatus: byType[type],
+      }))
+      .filter(t => t.total > 0),
   }
 }
 
@@ -453,11 +551,13 @@ export async function getIssueStats(cycleId: string): Promise<IssueStats> {
 export type ScenarioWithMeta = TestScenario & {
   result?: ScenarioResult
   reqCount: number
+  parentE2Es?: { id: string; title: string; orderIndex: number }[]
+  childCount?: number
 }
 
 export async function getScenarios(
   cycleId: string,
-  filters?: { scenarioType?: string; search?: string; status?: string }
+  filters?: { scenarioType?: string; search?: string; status?: string; systemId?: string }
 ): Promise<ScenarioWithMeta[]> {
   let query = supabase
     .from('test_scenarios')
@@ -473,16 +573,68 @@ export async function getScenarios(
   if (filters?.search) {
     query = query.ilike('title', `%${filters.search}%`)
   }
+  if (filters?.systemId && filters.systemId !== 'all') {
+    query = query.contains('system_ids', JSON.stringify([filters.systemId]))
+  }
 
   const { data, error } = await query
   if (error) throw error
 
-  return ((data ?? []) as any[]).map(row => ({
+  const scenarios: ScenarioWithMeta[] = ((data ?? []) as any[]).map(row => ({
     ...row,
     reqCount: (row.scenario_requirements ?? []).length,
     result: (row.scenario_results ?? []).find((r: any) => r.cycle_id === cycleId),
     scenario_requirements: undefined,
     scenario_results: undefined,
+    parentE2Es: [],
+    childCount: 0,
+  }))
+
+  if (scenarios.length === 0) return scenarios
+
+  // Enrich with composition data
+  const integrationIds = scenarios.filter(s => s.scenario_type === 'integration').map(s => s.id)
+  const e2eIds = scenarios.filter(s => s.scenario_type === 'e2e').map(s => s.id)
+
+  const [parentCompsResult, childCompsResult] = await Promise.all([
+    integrationIds.length > 0
+      ? supabase.from('scenario_compositions').select('child_id, parent_id, order_index').in('child_id', integrationIds)
+      : { data: [] as any[], error: null },
+    e2eIds.length > 0
+      ? supabase.from('scenario_compositions').select('parent_id').in('parent_id', e2eIds)
+      : { data: [] as any[], error: null },
+  ])
+
+  const parentComps = (parentCompsResult.data ?? []) as any[]
+  const childComps = (childCompsResult.data ?? []) as any[]
+
+  // Fetch parent E2E titles
+  const uniqueParentIds = [...new Set(parentComps.map((c: any) => c.parent_id as string))]
+  const parentTitleMap: Record<string, string> = {}
+  if (uniqueParentIds.length > 0) {
+    const { data: parents } = await supabase.from('test_scenarios').select('id, title').in('id', uniqueParentIds)
+    for (const p of (parents ?? []) as any[]) parentTitleMap[p.id] = p.title
+  }
+
+  // Build parentE2Es map
+  const parentE2EsMap: Record<string, { id: string; title: string; orderIndex: number }[]> = {}
+  for (const c of parentComps) {
+    if (!parentE2EsMap[c.child_id]) parentE2EsMap[c.child_id] = []
+    parentE2EsMap[c.child_id].push({ id: c.parent_id, title: parentTitleMap[c.parent_id] ?? '', orderIndex: c.order_index })
+  }
+  // Sort each parent list by orderIndex
+  for (const arr of Object.values(parentE2EsMap)) arr.sort((a, b) => a.orderIndex - b.orderIndex)
+
+  // Build childCount map
+  const childCountMap: Record<string, number> = {}
+  for (const c of childComps) {
+    childCountMap[c.parent_id] = (childCountMap[c.parent_id] ?? 0) + 1
+  }
+
+  return scenarios.map(s => ({
+    ...s,
+    parentE2Es: parentE2EsMap[s.id] ?? [],
+    childCount: childCountMap[s.id] ?? 0,
   }))
 }
 
@@ -491,6 +643,8 @@ export type ScenarioDetail = TestScenario & {
     requirement: Requirement & { systems?: System }
   })[]
   result?: ScenarioResult
+  parentE2Es?: { id: string; title: string; orderIndex: number }[]
+  childScenarios?: { id: string; title: string; orderIndex: number; result?: ScenarioResult }[]
 }
 
 export async function getScenarioDetail(
@@ -521,18 +675,68 @@ export async function getScenarioDetail(
       requirement: sr.requirements as Requirement & { systems?: System },
     }))
 
-  return {
+  const base = {
     ...row,
     linkedRequirements,
     result: (row.scenario_results ?? []).find((r: any) => r.cycle_id === cycleId),
     scenario_requirements: undefined,
     scenario_results: undefined,
   }
+
+  if (row.scenario_type === 'integration') {
+    const { data: comps } = await supabase
+      .from('scenario_compositions')
+      .select('parent_id, order_index')
+      .eq('child_id', id)
+      .order('order_index')
+    const parentIds = (comps ?? []).map((c: any) => c.parent_id as string)
+    let parentE2Es: { id: string; title: string; orderIndex: number }[] = []
+    if (parentIds.length > 0) {
+      const { data: parents } = await supabase.from('test_scenarios').select('id, title').in('id', parentIds)
+      const titleMap: Record<string, string> = {}
+      for (const p of (parents ?? []) as any[]) titleMap[p.id] = p.title
+      parentE2Es = (comps ?? []).map((c: any) => ({
+        id: c.parent_id,
+        title: titleMap[c.parent_id] ?? '',
+        orderIndex: c.order_index,
+      }))
+    }
+    return { ...base, parentE2Es }
+  }
+
+  if (row.scenario_type === 'e2e') {
+    const { data: comps } = await supabase
+      .from('scenario_compositions')
+      .select('child_id, order_index')
+      .eq('parent_id', id)
+      .order('order_index')
+    const childIds = (comps ?? []).map((c: any) => c.child_id as string)
+    let childScenarios: { id: string; title: string; orderIndex: number; result?: ScenarioResult }[] = []
+    if (childIds.length > 0) {
+      const [{ data: children }, { data: childResults }] = await Promise.all([
+        supabase.from('test_scenarios').select('id, title').in('id', childIds),
+        supabase.from('scenario_results').select('*').eq('cycle_id', cycleId).in('scenario_id', childIds),
+      ])
+      const titleMap: Record<string, string> = {}
+      for (const c of (children ?? []) as any[]) titleMap[c.id] = c.title
+      const resultMap = new Map((childResults ?? []).map((r: any) => [r.scenario_id, r as ScenarioResult]))
+      childScenarios = (comps ?? []).map((c: any) => ({
+        id: c.child_id,
+        title: titleMap[c.child_id] ?? '',
+        orderIndex: c.order_index,
+        result: resultMap.get(c.child_id),
+      }))
+    }
+    return { ...base, childScenarios }
+  }
+
+  return base
 }
 
 export async function createScenario(data: {
   title: string
   scenario_type: string
+  system_ids?: string[]
   business_context?: string | null
   precondition?: string | null
   steps?: string
@@ -583,6 +787,71 @@ export async function setScenarioRequirements(
   const { error: insError } = await supabase
     .from('scenario_requirements')
     .insert(items.map(item => ({ ...item, scenario_id: scenarioId })))
+  if (insError) throw insError
+}
+
+// 시나리오 타입별 제목 검색 (피커용)
+export async function searchScenarios(
+  query: string,
+  type: ScenarioType,
+  limit = 20
+): Promise<{ id: string; title: string }[]> {
+  let q = supabase
+    .from('test_scenarios')
+    .select('id, title')
+    .eq('scenario_type', type)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (query.trim()) {
+    q = q.ilike('title', `%${query}%`)
+  }
+  const { data } = await q
+  return (data ?? []) as { id: string; title: string }[]
+}
+
+export async function getE2EScenariosForPicker(): Promise<{ id: string; title: string }[]> {
+  const { data, error } = await supabase
+    .from('test_scenarios')
+    .select('id, title')
+    .eq('scenario_type', 'e2e')
+    .eq('status', 'active')
+    .order('created_at')
+  if (error) throw error
+  return (data ?? []) as { id: string; title: string }[]
+}
+
+// 통합 시나리오 기준: 속한 E2E 목록 일괄 갱신 (child 입장)
+export async function setScenarioCompositions(
+  childId: string,
+  items: Array<{ parent_id: string; order_index: number }>
+): Promise<void> {
+  const { error: delError } = await supabase
+    .from('scenario_compositions')
+    .delete()
+    .eq('child_id', childId)
+  if (delError) throw delError
+  if (items.length === 0) return
+  const { error: insError } = await supabase
+    .from('scenario_compositions')
+    .insert(items.map(item => ({ child_id: childId, parent_id: item.parent_id, order_index: item.order_index })))
+  if (insError) throw insError
+}
+
+// E2E 시나리오 기준: 포함된 통합 시나리오 목록 일괄 갱신 (parent 입장)
+export async function setScenarioCompositionsFromParent(
+  parentId: string,
+  items: Array<{ child_id: string; order_index: number }>
+): Promise<void> {
+  const { error: delError } = await supabase
+    .from('scenario_compositions')
+    .delete()
+    .eq('parent_id', parentId)
+  if (delError) throw delError
+  if (items.length === 0) return
+  const { error: insError } = await supabase
+    .from('scenario_compositions')
+    .insert(items.map(item => ({ parent_id: parentId, child_id: item.child_id, order_index: item.order_index })))
   if (insError) throw insError
 }
 

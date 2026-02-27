@@ -158,6 +158,7 @@ export interface TestScenario {
   id: string
   title: string
   scenario_type: ScenarioType
+  system_ids: string[]
   business_context: string | null
   precondition: string | null
   steps: string
@@ -186,6 +187,14 @@ export interface ScenarioResult {
   tested_at: string | null
   note: string | null
   issue_items: IssueItem[]
+  created_at: string
+}
+
+export interface ScenarioComposition {
+  id: string
+  parent_id: string
+  child_id: string
+  order_index: number
   created_at: string
 }
 
