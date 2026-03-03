@@ -134,6 +134,7 @@ export default function Home() {
               cycleId={selectedCycleId}
               systems={systems}
               onSelectRequirement={handleSelectRequirement}
+              onSelectScenario={() => setActiveTab('scenarios')}
               refreshKey={refreshKey}
             />
           </TabsContent>

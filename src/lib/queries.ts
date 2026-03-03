@@ -493,6 +493,37 @@ export async function getScenarioIssueStats(cycleId: string): Promise<ScenarioIs
   }
 }
 
+// ─── Scenarios With Issues (이슈 탭용) ─────────────────────────────────────────
+
+export type ScenarioWithIssue = TestScenario & {
+  result: ScenarioResult
+}
+
+export async function getScenariosWithIssues(cycleId: string): Promise<ScenarioWithIssue[]> {
+  const { data, error } = await supabase
+    .from('scenario_results')
+    .select('*, test_scenarios(*)')
+    .eq('cycle_id', cycleId)
+  if (error) throw error
+
+  return ((data ?? []) as any[])
+    .filter(row => row.status === 'Fail' || (row.issue_items?.length ?? 0) > 0)
+    .map(row => ({
+      ...(row.test_scenarios as TestScenario),
+      result: {
+        id: row.id,
+        scenario_id: row.scenario_id,
+        cycle_id: row.cycle_id,
+        status: row.status,
+        tester: row.tester,
+        tested_at: row.tested_at,
+        note: row.note,
+        issue_items: (row.issue_items ?? []) as IssueItem[],
+        created_at: row.created_at,
+      } as ScenarioResult,
+    })) as ScenarioWithIssue[]
+}
+
 // ─── Scenario Stats ───────────────────────────────────────────────────────────
 
 export interface ScenarioStats {
