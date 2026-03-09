@@ -756,10 +756,13 @@ function ScenarioDetailView({ detail, cycleId, onEdit, onDelete, onRefresh, onSe
   const [childOrderEditing, setChildOrderEditing] = useState(false)
   const [savingChildOrder, setSavingChildOrder] = useState(false)
 
+  // 자식 ID 목록이 바뀌면(신규 추가/삭제 후 refresh) localChildren 동기화
+  const childScenariosKey = childScenarios.map(c => c.id).join(',')
   useEffect(() => {
-    setLocalChildren([...(detail.childScenarios ?? [])])
-    setChildOrderEditing(false)
-  }, [detail.id]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!childOrderEditing) {
+      setLocalChildren([...(detail.childScenarios ?? [])])
+    }
+  }, [detail.id, childScenariosKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function moveChild(idx: number, dir: -1 | 1) {
     const target = idx + dir
@@ -1247,14 +1250,17 @@ interface ScenarioTabProps {
   systems: System[]
   onSelectRequirement: (req: Requirement & { currentResult?: undefined }) => void
   refreshKey: number
+  initialScenarioId?: string | null
+  onGlobalRefresh?: () => void
+  onScenarioChange?: (id: string | null) => void
 }
 
-export function ScenarioTab({ cycleId, systems, onSelectRequirement, refreshKey }: ScenarioTabProps) {
+export function ScenarioTab({ cycleId, systems, onSelectRequirement, refreshKey, initialScenarioId, onGlobalRefresh, onScenarioChange }: ScenarioTabProps) {
   const [scenarios, setScenarios] = useState<ScenarioWithMeta[]>([])
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(initialScenarioId ?? null)
   const [detail, setDetail] = useState<ScenarioDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view')
@@ -1298,6 +1304,19 @@ export function ScenarioTab({ cycleId, systems, onSelectRequirement, refreshKey 
   }, [cycleId, typeFilter, search, systemFilter, refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadList() }, [loadList])
+
+  useEffect(() => {
+    if (initialScenarioId) {
+      setNavHistory([])
+      setSelectedId(initialScenarioId)
+      setMode('view')
+    }
+  }, [initialScenarioId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // selectedId 변화 → 부모에게 알려 URL 동기화
+  useEffect(() => {
+    onScenarioChange?.(selectedId)
+  }, [selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true)
@@ -1535,7 +1554,7 @@ export function ScenarioTab({ cycleId, systems, onSelectRequirement, refreshKey 
             cycleId={cycleId}
             onEdit={() => setMode('edit')}
             onDelete={handleDelete}
-            onRefresh={() => { loadList(); loadDetail(detail.id) }}
+            onRefresh={() => { loadList(); loadDetail(detail.id); onGlobalRefresh?.() }}
             onSelectRequirement={onSelectRequirement}
             onSelectScenario={handleSelectScenario}
             onGoBack={navHistory.length > 0 ? handleGoBack : undefined}
